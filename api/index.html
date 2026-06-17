@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
 <title>MarketBot — AI 시황 상담</title>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <style>
@@ -130,6 +130,52 @@
                background: var(--muted); animation: blink 1.2s infinite; }
   .dots span:nth-child(2){animation-delay:.2s} .dots span:nth-child(3){animation-delay:.4s}
   @keyframes blink { 0%,80%,100%{opacity:.2} 40%{opacity:1} }
+
+  /* 모바일 하단 탭바 — 데스크탑에서는 숨김 */
+  .mobile-tabs { display: none; }
+
+  /* ── 모바일 (≤768px) ───────────────────────────────── */
+  @media (max-width: 768px) {
+    body { height: 100dvh; }
+    .layout { flex-direction: column; height: 100dvh; }
+
+    /* 두 패널을 전체폭으로, 탭으로 전환 */
+    .left, .right {
+      flex: none; width: 100%; min-width: 0;
+      height: calc(100dvh - 56px); /* 탭바 높이 제외 */
+      border-right: none;
+    }
+    .right { display: none; }                 /* 기본: 시세 탭 */
+    body.tab-chat .left  { display: none; }
+    body.tab-chat .right { display: flex; }
+
+    /* 시세 카드 2열 */
+    .card { flex: 1 1 calc(50% - 5px); padding: 12px 14px; }
+    .card .price { font-size: 16px; }
+
+    .panel-head { padding: 12px 16px; }
+    .logo .title { font-size: 15px; }
+    .left-scroll { padding: 16px; gap: 18px; }
+    .memo-box { padding: 12px 16px; }
+    .memo-box textarea { rows: 3; }
+
+    .bubble { max-width: 90%; font-size: 14px; }
+    .chat-msgs { padding: 14px 12px; }
+
+    /* 하단 탭바 */
+    .mobile-tabs {
+      display: flex; height: 56px; flex-shrink: 0;
+      background: var(--surface); border-top: 1px solid var(--border);
+    }
+    .mobile-tabs button {
+      flex: 1; background: none; border: none; cursor: pointer;
+      color: var(--muted); font-size: 12px; font-weight: 600;
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 3px;
+    }
+    .mobile-tabs button .ico { font-size: 18px; }
+    .mobile-tabs button.active { color: var(--accent); }
+  }
 </style>
 </head>
 <body>
@@ -193,8 +239,26 @@
     </form>
   </div>
 
+  <!-- 모바일 하단 탭바 -->
+  <nav class="mobile-tabs">
+    <button id="tab-market" class="active" onclick="switchTab('market')">
+      <span class="ico">📈</span>시세
+    </button>
+    <button id="tab-chat" onclick="switchTab('chat')">
+      <span class="ico">💬</span>AI 상담
+    </button>
+  </nav>
+
 </div>
 
+<script>
+  // ── 모바일 탭 전환 ──
+  function switchTab(tab) {
+    document.body.classList.toggle('tab-chat', tab === 'chat');
+    document.getElementById('tab-market').classList.toggle('active', tab === 'market');
+    document.getElementById('tab-chat').classList.toggle('active', tab === 'chat');
+  }
+</script>
 <script>
   const QUICK = [
     '나스닥, S&P500, 비트코인 오늘 시황 분석해줘',
@@ -310,6 +374,9 @@
     if (!text || sendBtn.disabled) return;
     input.value = '';
     sendBtn.disabled = true;
+
+    // 모바일: 질문 전송 시 채팅 탭으로 전환
+    if (window.matchMedia('(max-width: 768px)').matches) switchTab('chat');
 
     addMsg('user', text);
     const snapshot = history.slice();
