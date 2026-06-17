@@ -388,10 +388,40 @@
     });
   }
 
-  // ── 메모 ──
+  // ── 메모 (Supabase 동기화 + localStorage 폴백) ──
   const memo = document.getElementById('memo');
-  memo.value = localStorage.getItem('market-memo') || '';
-  memo.addEventListener('input', () => localStorage.setItem('market-memo', memo.value));
+  let memoConfigured = false;
+  let memoTimer = null;
+
+  (async function initMemo() {
+    memo.value = localStorage.getItem('market-memo') || '';
+    try {
+      const res = await fetch('/api/memo');
+      const data = await res.json();
+      if (data.configured) {
+        memoConfigured = true;
+        if (data.content != null) {
+          memo.value = data.content;
+          localStorage.setItem('market-memo', data.content);
+        }
+      }
+    } catch (e) { /* 오프라인이면 localStorage 유지 */ }
+  })();
+
+  memo.addEventListener('input', () => {
+    localStorage.setItem('market-memo', memo.value);  // 항상 로컬 백업
+    if (!memoConfigured) return;
+    clearTimeout(memoTimer);
+    memoTimer = setTimeout(async () => {
+      try {
+        await fetch('/api/memo', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: memo.value }),
+        });
+      } catch (e) { /* 실패해도 로컬엔 저장됨 */ }
+    }, 800);  // 디바운스
+  });
 
   // ── 채팅 ──
   const msgsEl = document.getElementById('msgs');

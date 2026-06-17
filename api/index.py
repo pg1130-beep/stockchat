@@ -21,6 +21,42 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app, supports_credentials=False)
 
+# ── Supabase (메모 저장) ─────────────────────────────────────────────────────
+import urllib.request
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+MEMO_ID = "shared"  # 단일 공유 메모
+
+
+def _sb_headers(extra=None):
+    h = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+    }
+    if extra:
+        h.update(extra)
+    return h
+
+
+def _supabase_get_memo() -> str:
+    url = f"{SUPABASE_URL}/rest/v1/memos?id=eq.{MEMO_ID}&select=content"
+    req = urllib.request.Request(url, headers=_sb_headers())
+    with urllib.request.urlopen(req, timeout=8) as r:
+        rows = json.load(r)
+    return rows[0]["content"] if rows else ""
+
+
+def _supabase_upsert_memo(content: str):
+    url = f"{SUPABASE_URL}/rest/v1/memos"
+    body = json.dumps([{"id": MEMO_ID, "content": content}]).encode()
+    req = urllib.request.Request(
+        url, data=body, method="POST",
+        headers=_sb_headers({"Prefer": "resolution=merge-duplicates"}),
+    )
+    with urllib.request.urlopen(req, timeout=8) as r:
+        r.read()
+
 
 # ── State ──────────────────────────────────────────────────────────────────
 class ChatState(TypedDict):
@@ -627,6 +663,29 @@ def analyze():
 
     return Response(stream_with_context(generate()), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.route("/api/memo", methods=["GET"])
+def get_memo():
+    """단일 공유 메모 조회. Supabase 미설정 시 configured=False → 프론트가 localStorage 사용."""
+    if not (SUPABASE_URL and SUPABASE_KEY):
+        return jsonify({"configured": False, "content": None})
+    try:
+        return jsonify({"configured": True, "content": _supabase_get_memo()})
+    except Exception as e:
+        return jsonify({"configured": True, "content": None, "error": str(e)}), 500
+
+
+@app.route("/api/memo", methods=["POST"])
+def save_memo():
+    if not (SUPABASE_URL and SUPABASE_KEY):
+        return jsonify({"ok": False, "configured": False})
+    content = (request.json or {}).get("content", "")
+    try:
+        _supabase_upsert_memo(content)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/api/health", methods=["GET"])
