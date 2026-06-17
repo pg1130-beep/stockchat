@@ -17,7 +17,7 @@ function Message({ msg }) {
         {isUser ? '나' : 'MarketBot'}
       </span>
       <div style={{
-        maxWidth: '78%',
+        maxWidth: isUser ? '72%' : '88%',
         padding: '12px 16px',
         borderRadius: 16,
         borderBottomRightRadius: isUser ? 4 : 16,
