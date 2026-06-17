@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import MarkdownRenderer from './MarkdownRenderer'
 
 const QUICK = [
   { label: '📊 주요 지수·시세', text: '나스닥, S&P500, 비트코인 지금 시세 알려줘' },
@@ -30,9 +29,7 @@ function Message({ msg }) {
       }}>
         {isUser
           ? <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</span>
-          : <div className="md-body">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
-            </div>
+          : <MarkdownRenderer content={msg.content} />
         }
       </div>
     </div>
