@@ -142,6 +142,38 @@ def chat():
         return jsonify({"error": str(e)}), 500
 
 
+MARKET_TICKERS = [
+    {"symbol": "^GSPC",    "label": "S&P 500"},
+    {"symbol": "^IXIC",    "label": "NASDAQ"},
+    {"symbol": "^DJI",     "label": "DOW"},
+    {"symbol": "^KS11",    "label": "KOSPI"},
+    {"symbol": "BTC-USD",  "label": "Bitcoin"},
+    {"symbol": "ETH-USD",  "label": "Ethereum"},
+    {"symbol": "GC=F",     "label": "Gold"},
+    {"symbol": "DX-Y.NYB", "label": "USD Index"},
+]
+
+@app.route("/api/market", methods=["GET"])
+def market():
+    results = []
+    for t in MARKET_TICKERS:
+        try:
+            fi = yf.Ticker(t["symbol"]).fast_info
+            price = fi.last_price
+            prev  = fi.previous_close
+            pct   = (price - prev) / prev * 100
+            results.append({
+                "symbol":  t["symbol"],
+                "label":   t["label"],
+                "price":   round(price, 2),
+                "change":  round(pct, 2),
+                "currency": fi.currency,
+            })
+        except Exception:
+            results.append({"symbol": t["symbol"], "label": t["label"], "error": True})
+    return jsonify(results)
+
+
 @app.route("/api/health", methods=["GET"])
 def health():
     return jsonify({"ok": True})
