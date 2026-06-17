@@ -412,6 +412,38 @@
                .replace(/<\/table>/g, '</table></div>');
   }
 
+  // ── SSE 스트림 리더 (공통) ──
+  async function streamSSE(url, body, { onStatus, onMeta, onDelta }) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.body) throw new Error('스트림 미지원 응답');
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const parts = buf.split('\n\n');
+      buf = parts.pop();
+      for (const part of parts) {
+        const line = part.trim();
+        if (!line.startsWith('data:')) continue;
+        const payload = line.slice(5).trim();
+        if (payload === '[DONE]') return;
+        let obj;
+        try { obj = JSON.parse(payload); } catch { continue; }
+        if (obj.error) throw new Error(obj.error);
+        if (obj.status && onStatus) onStatus(obj.status);
+        if (obj.meta && onMeta) onMeta(obj.meta);
+        if (obj.delta && onDelta) onDelta(obj.delta);
+      }
+    }
+  }
+
   async function sendMessage(text) {
     text = text.trim();
     if (!text || sendBtn.disabled) return;
@@ -424,22 +456,24 @@
     addMsg('user', text);
     const snapshot = history.slice();
     history.push({ role: 'user', content: text });
-    const thinking = addMsg('ai', '', true);
+    const wrap = addMsg('ai', '', true);
+    const bubble = wrap.querySelector('.bubble');
+    let acc = '';
 
     try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, history: snapshot }),
+      await streamSSE('/api/chat', { message: text, history: snapshot }, {
+        onDelta: (d) => {
+          acc += d;
+          bubble.classList.remove('thinking');
+          bubble.innerHTML = renderMarkdown(acc);
+          msgsEl.scrollTop = msgsEl.scrollHeight;
+        },
       });
-      const data = await res.json();
-      thinking.remove();
-      const reply = data.error ? ('오류: ' + data.error) : data.reply;
-      addMsg('ai', reply);
-      history.push({ role: 'ai', content: reply });
+      if (!acc) { bubble.classList.remove('thinking'); bubble.textContent = '(빈 응답)'; }
+      history.push({ role: 'ai', content: acc });
     } catch (e) {
-      thinking.remove();
-      addMsg('ai', '네트워크 오류가 발생했습니다.');
+      bubble.classList.remove('thinking');
+      bubble.textContent = '오류: ' + e.message;
     }
     sendBtn.disabled = false;
     input.focus();
@@ -469,29 +503,30 @@
     runBtn.disabled = true;
     runBtn.textContent = '분석 중…';
     addMsg('user', `📊 "${name}" 페르소나 심층 분석 요청`);
-    const thinking = addMsg('ai', '', true);
-    thinking.querySelector('.bubble').innerHTML =
-      '워크플로우 실행 중 — 정량·레짐·뉴스 수집 후 3페르소나 분석 <span class="dots"><span></span><span></span><span></span></span>';
+    const wrap = addMsg('ai', '', true);
+    const bubble = wrap.querySelector('.bubble');
+    const dots = '<span class="dots"><span></span><span></span><span></span></span>';
+    bubble.innerHTML = '워크플로우 시작... ' + dots;
+    let acc = '';
 
     try {
-      const res = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ticker: name }),
+      await streamSSE('/api/analyze', { ticker: name }, {
+        onStatus: (s) => { if (!acc) bubble.innerHTML = s + ' ' + dots; },
+        onDelta: (d) => {
+          acc += d;
+          bubble.classList.remove('thinking');
+          bubble.innerHTML = renderMarkdown(acc);
+          msgsEl.scrollTop = msgsEl.scrollHeight;
+        },
       });
-      const data = await res.json();
-      thinking.remove();
-      if (data.error) {
-        addMsg('ai', '분석 실패: ' + data.error);
-      } else {
-        addMsg('ai', data.report);
-        // 후속 질문을 위해 히스토리에 요약 컨텍스트 추가
+      if (!acc) { bubble.classList.remove('thinking'); bubble.textContent = '(빈 리포트)'; }
+      else {
         history.push({ role: 'user', content: `${name} 심층 분석 요청` });
-        history.push({ role: 'ai', content: data.report });
+        history.push({ role: 'ai', content: acc });
       }
     } catch (e) {
-      thinking.remove();
-      addMsg('ai', '네트워크 오류 또는 시간 초과가 발생했습니다. 다시 시도해주세요.');
+      bubble.classList.remove('thinking');
+      bubble.textContent = '분석 실패: ' + e.message;
     }
     runBtn.disabled = false;
     runBtn.textContent = '리포트 생성';

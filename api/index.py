@@ -1,5 +1,6 @@
 import os
-from flask import Flask, request, jsonify, Response
+import json
+from flask import Flask, request, jsonify, Response, stream_with_context
 from flask_cors import CORS
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
@@ -475,11 +476,19 @@ def chat():
             messages.append(AIMessage(content=m["content"]))
     messages.append(HumanMessage(content=user_text))
 
-    try:
-        result = graph.invoke({"messages": messages})
-        return jsonify({"reply": result["messages"][-1].content})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    def generate():
+        try:
+            # stream_mode="messages" → LLM 토큰 단위로 yield
+            for chunk, meta in graph.stream({"messages": messages}, stream_mode="messages"):
+                # chat 노드의 AI 토큰만 전송 (툴 메시지·툴콜 인자 제외)
+                if meta.get("langgraph_node") == "chat" and getattr(chunk, "content", ""):
+                    yield f"data: {json.dumps({'delta': chunk.content})}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return Response(stream_with_context(generate()), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 MARKET_TICKERS = [
@@ -523,48 +532,51 @@ def analyze():
     if not name:
         return jsonify({"error": "종목명을 입력하세요."}), 400
 
-    try:
-        ticker = resolve_ticker(name)
+    def generate():
+        try:
+            ticker = resolve_ticker(name)
 
-        # Step 1·1.5·2를 병렬 수집 (독립적이므로 동시 실행 → 지연 단축)
-        def fetch_news():
-            try:
-                with DDGS() as ddgs:
-                    news = list(ddgs.text(f"{name} 주가 뉴스 목표주가", max_results=5))
-                return "\n".join(f"- {r['title']}: {r['body']}" for r in news) or "- 수집된 뉴스 없음"
-            except Exception:
-                return "- (뉴스 수집 실패 — 정성 분석은 일반론으로 제한)"
+            # 진행 상태 알림 (수집 단계)
+            yield f"data: {json.dumps({'status': '정량·레짐·뉴스 데이터 수집 중...'})}\n\n"
 
-        with ThreadPoolExecutor(max_workers=3) as ex:
-            f_quant = ex.submit(compute_quant, ticker)
-            f_regime = ex.submit(detect_market_regime)
-            f_news = ex.submit(fetch_news)
-            quant = f_quant.result()
-            regime = f_regime.result()
-            qualitative = f_news.result()
+            def fetch_news():
+                try:
+                    with DDGS() as ddgs:
+                        news = list(ddgs.text(f"{name} 주가 뉴스 목표주가", max_results=5))
+                    return "\n".join(f"- {r['title']}: {r['body']}" for r in news) or "- 수집된 뉴스 없음"
+                except Exception:
+                    return "- (뉴스 수집 실패 — 정성 분석은 일반론으로 제한)"
 
-        if quant.get("error"):
-            return jsonify({"error": quant["error"]}), 400
+            with ThreadPoolExecutor(max_workers=3) as ex:
+                f_quant = ex.submit(compute_quant, ticker)
+                f_regime = ex.submit(detect_market_regime)
+                f_news = ex.submit(fetch_news)
+                quant = f_quant.result()
+                regime = f_regime.result()
+                qualitative = f_news.result()
 
-        # Step 4. LLM 종합 리포트
-        prompt = build_analysis_prompt(name, quant, regime, qualitative)
-        result = report_model.invoke([
-            SystemMessage(content="당신은 정량 데이터를 절대 변형하지 않는 보수적 금융 분석 엔진입니다."),
-            HumanMessage(content=prompt),
-        ])
+            if quant.get("error"):
+                yield f"data: {json.dumps({'error': quant['error']})}\n\n"
+                return
 
-        return jsonify({
-            "report": result.content,
-            "meta": {
-                "ticker": ticker,
-                "regime_score": regime["score"],
-                "regime_state": regime["state"],
-                "price": quant["price"],
-                "currency": quant["currency"],
-            },
-        })
-    except Exception as e:
-        return jsonify({"error": f"분석 실패: {e}"}), 500
+            # 메타 정보 먼저 전송
+            yield f"data: {json.dumps({'meta': {'ticker': ticker, 'regime_score': regime['score'], 'regime_state': regime['state'], 'price': quant['price'], 'currency': quant['currency']}})}\n\n"
+            yield f"data: {json.dumps({'status': '3페르소나 리포트 작성 중...'})}\n\n"
+
+            # Step 4. LLM 리포트 — 토큰 스트리밍
+            prompt = build_analysis_prompt(name, quant, regime, qualitative)
+            for chunk in report_model.stream([
+                SystemMessage(content="당신은 정량 데이터를 절대 변형하지 않는 보수적 금융 분석 엔진입니다."),
+                HumanMessage(content=prompt),
+            ]):
+                if getattr(chunk, "content", ""):
+                    yield f"data: {json.dumps({'delta': chunk.content})}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': f'분석 실패: {e}'})}\n\n"
+
+    return Response(stream_with_context(generate()), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.route("/api/health", methods=["GET"])

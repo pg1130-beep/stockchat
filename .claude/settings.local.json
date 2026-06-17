@@ -3,7 +3,9 @@
     "allow": [
       "Bash(python3 chatbot.py --provider gemini)",
       "Bash(curl -s https://stockchat-kappa.vercel.app)",
-      "Bash(curl -s http://localhost:8080/api/market)"
+      "Bash(curl -s http://localhost:8080/api/market)",
+      "Bash(curl -s -X POST https://stockchat-kappa.vercel.app/api/analyze -H \"Content-Type: application/json\" -d '{\"ticker\":\"삼성전자\"}' -o /tmp/prod2.json -w \"HTTP %{http_code} time=%{time_total}s\\\\n\" --max-time 90)",
+      "Bash(python3 -c ' *)"
     ]
   }
 }
