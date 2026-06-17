@@ -131,6 +131,26 @@
   .dots span:nth-child(2){animation-delay:.2s} .dots span:nth-child(3){animation-delay:.4s}
   @keyframes blink { 0%,80%,100%{opacity:.2} 40%{opacity:1} }
 
+  /* 심층 분석 워크플로우 */
+  .workflow { background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .workflow-toggle { width: 100%; background: none; border: none; cursor: pointer;
+                     color: var(--text); padding: 10px 16px; font-size: 13px; font-weight: 600;
+                     display: flex; align-items: center; justify-content: space-between; }
+  .workflow-toggle:hover { color: var(--accent); }
+  .workflow-body { display: none; padding: 0 16px 14px; }
+  .workflow.open .workflow-body { display: block; }
+  .wf-steps { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+  .wf-steps label { font-size: 11.5px; color: var(--muted); display: flex; align-items: flex-start; gap: 7px; line-height: 1.4; }
+  .wf-steps input { accent-color: var(--green); margin-top: 1px; }
+  .wf-form { display: flex; gap: 8px; }
+  .wf-form input { flex: 1; background: var(--bg); border: 1px solid var(--border);
+                   color: var(--text); padding: 9px 12px; border-radius: 9px; font-size: 13px; outline: none; }
+  .wf-form input:focus { border-color: var(--accent); }
+  .wf-form button { background: var(--green); color: #003; border: none;
+                    padding: 9px 16px; border-radius: 9px; cursor: pointer; font-size: 13px; font-weight: 700; white-space: nowrap; }
+  .wf-form button:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; }
+  .wf-note { margin-top: 9px; font-size: 10.5px; color: var(--muted); }
+
   /* 모바일 하단 탭바 — 데스크탑에서는 숨김 */
   .mobile-tabs { display: none; }
 
@@ -230,6 +250,29 @@
       </div>
       <button class="ghost-btn" onclick="clearChat()">초기화</button>
     </div>
+
+    <!-- 심층 분석 워크플로우 -->
+    <div class="workflow">
+      <button class="workflow-toggle" id="wf-toggle" onclick="toggleWorkflow()">
+        <span>📊 페르소나 심층 분석 리포트</span>
+        <span id="wf-arrow">▾</span>
+      </button>
+      <div class="workflow-body" id="wf-body">
+        <div class="wf-steps">
+          <label><input type="checkbox" checked disabled> Step 1 · 정량 데이터 (MA20·이격도·ATR·거래량 변화율)</label>
+          <label><input type="checkbox" checked disabled> Step 1.5 · 시장 레짐 감지 (6지표 → 점수)</label>
+          <label><input type="checkbox" checked disabled> Step 2 · 정성 데이터 (뉴스·목표주가)</label>
+          <label><input type="checkbox" checked disabled> Step 3·4 · 3페르소나 분석 (개미·기관·외국인)</label>
+          <label><input type="checkbox" checked disabled> Step 4.5·4.7 · 손절 기준 + 안전마진</label>
+        </div>
+        <div class="wf-form">
+          <input id="wf-ticker" placeholder="종목명 (예: 삼성전자, AAPL)" autocomplete="off">
+          <button id="wf-run" onclick="runWorkflow()">리포트 생성</button>
+        </div>
+        <div class="wf-note">⚠️ 정량지표는 yfinance 실측값 기준 · 분석에 30~60초 소요</div>
+      </div>
+    </div>
+
     <div class="chat-msgs" id="msgs">
       <div class="empty-hint" id="hint">왼쪽 빠른 분석 버튼을 누르거나<br>직접 질문을 입력해보세요.</div>
     </div>
@@ -405,6 +448,54 @@
   function clearChat() {
     history.length = 0;
     msgsEl.innerHTML = '<div class="empty-hint" id="hint">왼쪽 빠른 분석 버튼을 누르거나<br>직접 질문을 입력해보세요.</div>';
+  }
+
+  // ── 심층 분석 워크플로우 ──
+  function toggleWorkflow() {
+    const wf = document.querySelector('.workflow');
+    wf.classList.toggle('open');
+    document.getElementById('wf-arrow').textContent = wf.classList.contains('open') ? '▴' : '▾';
+  }
+
+  async function runWorkflow() {
+    const tickerInput = document.getElementById('wf-ticker');
+    const runBtn = document.getElementById('wf-run');
+    const name = tickerInput.value.trim();
+    if (!name) { tickerInput.focus(); return; }
+
+    // 모바일이면 채팅 탭으로 전환
+    if (window.matchMedia('(max-width: 768px)').matches) switchTab('chat');
+
+    runBtn.disabled = true;
+    runBtn.textContent = '분석 중…';
+    addMsg('user', `📊 "${name}" 페르소나 심층 분석 요청`);
+    const thinking = addMsg('ai', '', true);
+    thinking.querySelector('.bubble').innerHTML =
+      '워크플로우 실행 중 — 정량·레짐·뉴스 수집 후 3페르소나 분석 <span class="dots"><span></span><span></span><span></span></span>';
+
+    try {
+      const res = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticker: name }),
+      });
+      const data = await res.json();
+      thinking.remove();
+      if (data.error) {
+        addMsg('ai', '분석 실패: ' + data.error);
+      } else {
+        addMsg('ai', data.report);
+        // 후속 질문을 위해 히스토리에 요약 컨텍스트 추가
+        history.push({ role: 'user', content: `${name} 심층 분석 요청` });
+        history.push({ role: 'ai', content: data.report });
+      }
+    } catch (e) {
+      thinking.remove();
+      addMsg('ai', '네트워크 오류 또는 시간 초과가 발생했습니다. 다시 시도해주세요.');
+    }
+    runBtn.disabled = false;
+    runBtn.textContent = '리포트 생성';
+    tickerInput.value = '';
   }
 
   document.getElementById('form').addEventListener('submit', e => {

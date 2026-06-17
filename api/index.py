@@ -13,6 +13,12 @@ from typing import Annotated
 from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 import yfinance as yf
+from concurrent.futures import ThreadPoolExecutor
+
+from analysis import (
+    resolve_ticker, compute_quant, detect_market_regime,
+    build_analysis_prompt, PERSONAS,
+)
 
 load_dotenv()
 
@@ -104,6 +110,14 @@ def build_graph():
 
 graph = build_graph()
 
+# 워크플로우 리포트용 — 더 빠른 모델 + 토큰 제한 (Vercel 60초 제한 대응)
+report_model = ChatOpenAI(
+    model="openai/gpt-oss-20b:free",
+    base_url="https://openrouter.ai/api/v1",
+    api_key=os.getenv("OPENROUTER_API_KEY"),
+    max_tokens=2800,
+)
+
 
 def get_system_prompt() -> str:
     now = datetime.now()
@@ -172,6 +186,59 @@ def market():
         except Exception:
             results.append({"symbol": t["symbol"], "label": t["label"], "error": True})
     return jsonify(results)
+
+
+@app.route("/api/analyze", methods=["POST"])
+def analyze():
+    """페르소나 기반 종목 심층 분석 워크플로우.
+    Step1(정량) → Step1.5(레짐) → Step2(정성) → Step4(LLM 리포트)를 순차 수행."""
+    data = request.json or {}
+    name = (data.get("ticker") or "").strip()
+    if not name:
+        return jsonify({"error": "종목명을 입력하세요."}), 400
+
+    try:
+        ticker = resolve_ticker(name)
+
+        # Step 1·1.5·2를 병렬 수집 (독립적이므로 동시 실행 → 지연 단축)
+        def fetch_news():
+            try:
+                with DDGS() as ddgs:
+                    news = list(ddgs.text(f"{name} 주가 뉴스 목표주가", max_results=5))
+                return "\n".join(f"- {r['title']}: {r['body']}" for r in news) or "- 수집된 뉴스 없음"
+            except Exception:
+                return "- (뉴스 수집 실패 — 정성 분석은 일반론으로 제한)"
+
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            f_quant = ex.submit(compute_quant, ticker)
+            f_regime = ex.submit(detect_market_regime)
+            f_news = ex.submit(fetch_news)
+            quant = f_quant.result()
+            regime = f_regime.result()
+            qualitative = f_news.result()
+
+        if quant.get("error"):
+            return jsonify({"error": quant["error"]}), 400
+
+        # Step 4. LLM 종합 리포트
+        prompt = build_analysis_prompt(name, quant, regime, qualitative)
+        result = report_model.invoke([
+            SystemMessage(content="당신은 정량 데이터를 절대 변형하지 않는 보수적 금융 분석 엔진입니다."),
+            HumanMessage(content=prompt),
+        ])
+
+        return jsonify({
+            "report": result.content,
+            "meta": {
+                "ticker": ticker,
+                "regime_score": regime["score"],
+                "regime_state": regime["state"],
+                "price": quant["price"],
+                "currency": quant["currency"],
+            },
+        })
+    except Exception as e:
+        return jsonify({"error": f"분석 실패: {e}"}), 500
 
 
 @app.route("/api/health", methods=["GET"])
