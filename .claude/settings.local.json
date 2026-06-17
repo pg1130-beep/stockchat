@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(python3 chatbot.py --provider gemini)",
-      "Bash(curl -s https://stockchat-kappa.vercel.app)"
+      "Bash(curl -s https://stockchat-kappa.vercel.app)",
+      "Bash(curl -s http://localhost:8080/api/market)"
     ]
   }
 }

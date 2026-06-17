@@ -1,5 +1,5 @@
 import os
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
@@ -177,3 +177,16 @@ def market():
 @app.route("/api/health", methods=["GET"])
 def health():
     return jsonify({"ok": True})
+
+
+# ── 정적 페이지 ─────────────────────────────────────────────────────────────
+_HTML_PATH = os.path.join(os.path.dirname(__file__), "index.html")
+
+@app.route("/")
+def index():
+    with open(_HTML_PATH, encoding="utf-8") as f:
+        return Response(f.read(), mimetype="text/html")
+
+
+if __name__ == "__main__":
+    app.run(debug=True, port=8080)
