@@ -163,6 +163,27 @@ def _has_hangul(s: str) -> bool:
     return any("가" <= ch <= "힣" for ch in s)
 
 
+def _search_kr_ticker(name: str) -> str | None:
+    """네이버 종목 자동완성으로 한글 종목명 → yfinance 티커 검색."""
+    import urllib.request, urllib.parse, json as _json
+    try:
+        url = f"https://ac.stock.naver.com/ac?q={urllib.parse.quote(name)}&target=stock"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=6) as r:
+            items = _json.load(r).get("items", [])
+        for it in items:
+            if it.get("nationCode") != "KOR":
+                continue
+            code = it.get("code", "")
+            if not (code.isdigit() and len(code) == 6):
+                continue
+            suffix = ".KQ" if it.get("typeCode") == "KOSDAQ" else ".KS"
+            return f"{code}{suffix}"
+    except Exception:
+        pass
+    return None
+
+
 def resolve_ticker(name: str) -> str:
     """종목명 또는 티커를 yfinance 티커로 변환."""
     key = name.strip().lower()
@@ -172,6 +193,11 @@ def resolve_ticker(name: str) -> str:
     raw = name.strip().upper().replace(".KS", "").replace(".KQ", "")
     if raw.isdigit() and len(raw) == 6:
         return name.strip().upper() if name.strip().upper().endswith((".KS", ".KQ")) else f"{raw}.KS"
+    # 한글 종목명은 네이버 자동완성으로 실시간 검색
+    if _has_hangul(name):
+        found = _search_kr_ticker(name.strip())
+        if found:
+            return found
     # 그 외는 입력값을 그대로 티커로 사용 (미국주식 등)
     return name.strip().upper()
 
