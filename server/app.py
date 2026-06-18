@@ -472,27 +472,20 @@ def build_email_html(regime: dict, stocks: list, generated_at: str) -> str:
 
 
 def send_email(to: str, subject: str, html: str) -> dict:
-    """Resend API로 이메일 발송."""
+    """Resend 공식 SDK로 이메일 발송."""
     if not RESEND_API_KEY:
         raise RuntimeError("RESEND_API_KEY 미설정")
-    import requests as _req
-    resp = _req.post(
-        "https://api.resend.com/emails",
-        headers={
-            "Authorization": f"Bearer {RESEND_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "from": RESEND_FROM,
-            "to": [to],
-            "subject": subject,
-            "html": html,
-        },
-        timeout=15,
-    )
-    if not resp.ok:
-        raise RuntimeError(f"Resend {resp.status_code}: {resp.text}")
-    return resp.json()
+    import resend as _resend
+    _resend.api_key = RESEND_API_KEY
+    result = _resend.Emails.send({
+        "from": RESEND_FROM,
+        "to": [to],
+        "subject": subject,
+        "html": html,
+    })
+    if isinstance(result, dict) and result.get("statusCode", 200) >= 400:
+        raise RuntimeError(f"Resend 오류: {result}")
+    return result if isinstance(result, dict) else {"id": str(result)}
 
 
 def send_report_to(email: str, tickers_raw: list) -> dict:
