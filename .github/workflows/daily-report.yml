@@ -1,0 +1,17 @@
+name: Daily Report
+
+on:
+  schedule:
+    - cron: '0 23 * * *'   # 매일 23:00 UTC = 08:00 KST
+  workflow_dispatch:         # 수동 실행 버튼
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 정기 리포트 발송 트리거
+        run: |
+          curl -sf -X POST https://stockchat-kka8.onrender.com/api/v2/report/generate-all \
+            -H "Content-Type: application/json" \
+            -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}" \
+            -d '{}'
