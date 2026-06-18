@@ -30,6 +30,9 @@ CORS(app, origins=ALLOWED_ORIGINS, supports_credentials=False)
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+RESEND_FROM = os.getenv("RESEND_FROM", "onboarding@resend.dev")
+VERCEL_URL = os.getenv("VERCEL_URL", "https://stockchat-kappa.vercel.app")
 
 
 # ── Supabase 헬퍼 ─────────────────────────────────────────────────────────────
@@ -328,6 +331,196 @@ def build_report_for_ticker(name: str, regime: dict) -> dict:
     }
 
 
+# ── HTML 이메일 템플릿 ────────────────────────────────────────────────────────
+def _regime_color(state: str) -> str:
+    if "강세" in state or "상승" in state:
+        return "#16a34a"
+    if "경계" in state:
+        return "#ca8a04"
+    if "전환" in state:
+        return "#ea580c"
+    return "#dc2626"
+
+
+def build_email_html(regime: dict, stocks: list, generated_at: str) -> str:
+    date_str = datetime.utcnow().strftime("%Y년 %m월 %d일")
+    rc = _regime_color(regime["state"])
+
+    stock_rows = ""
+    for s in stocks:
+        if "error" in s:
+            stock_rows += f"""
+            <tr>
+              <td style="padding:12px 8px;border-bottom:1px solid #e5e7eb;font-weight:600;">{s['name']}</td>
+              <td colspan="5" style="padding:12px 8px;border-bottom:1px solid #e5e7eb;color:#ef4444;">
+                데이터 조회 실패: {s['error']}
+              </td>
+            </tr>"""
+            continue
+
+        cur = s["currency"]
+        fmt = f"{s['price']:,.0f}" if cur == "KRW" else f"{s['price']:,.2f}"
+        gap_color = "#16a34a" if s["gap20"] >= 0 else "#dc2626"
+        ma_badge = (
+            '<span style="background:#fef2f2;color:#dc2626;padding:2px 6px;border-radius:4px;font-size:11px;">MA20 아래</span>'
+            if s["below_ma20"]
+            else '<span style="background:#f0fdf4;color:#16a34a;padding:2px 6px;border-radius:4px;font-size:11px;">MA20 위</span>'
+        )
+        stock_rows += f"""
+            <tr>
+              <td style="padding:12px 8px;border-bottom:1px solid #e5e7eb;font-weight:600;">{s['name']}<br>
+                <span style="font-size:11px;color:#6b7280;">{s['ticker']}</span>
+              </td>
+              <td style="padding:12px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:600;">
+                {fmt} {cur}
+              </td>
+              <td style="padding:12px 8px;border-bottom:1px solid #e5e7eb;text-align:center;">
+                {ma_badge}<br>
+                <span style="font-size:12px;color:{gap_color};">이격 {s['gap20']:+.1f}%</span>
+              </td>
+              <td style="padding:12px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-size:13px;color:#374151;">
+                ATR {s['atr14']:,} {cur}<br>
+                <span style="color:#6b7280;">손절 {s['atr_stop']:,}</span>
+              </td>
+              <td style="padding:12px 8px;border-bottom:1px solid #e5e7eb;font-size:13px;color:#374151;max-width:200px;">
+                {s['comment']}
+              </td>
+            </tr>"""
+
+    return f"""<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>StockChat 일간 리포트 — {date_str}</title>
+</head>
+<body style="margin:0;padding:0;background:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;padding:32px 0;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.1);">
+
+  <!-- 헤더 -->
+  <tr>
+    <td style="background:linear-gradient(135deg,#1e3a5f 0%,#2563eb 100%);padding:28px 32px;">
+      <p style="margin:0;color:rgba(255,255,255,.7);font-size:13px;">{date_str} 장 마감 후 분석</p>
+      <h1 style="margin:6px 0 0;color:#ffffff;font-size:24px;font-weight:700;">📈 StockChat 일간 리포트</h1>
+    </td>
+  </tr>
+
+  <!-- 시장 레짐 -->
+  <tr>
+    <td style="padding:24px 32px;border-bottom:1px solid #e5e7eb;">
+      <h2 style="margin:0 0 12px;font-size:15px;color:#374151;">시장 레짐</h2>
+      <table cellpadding="0" cellspacing="0">
+        <tr>
+          <td style="background:{rc};color:#fff;padding:8px 18px;border-radius:20px;font-weight:700;font-size:15px;">
+            {regime['state']}
+          </td>
+          <td style="padding-left:16px;font-size:14px;color:#6b7280;">
+            종합점수 <strong style="color:#111827;">{regime['score']:+d}</strong> &nbsp;|&nbsp;
+            KOSPI <strong style="color:#111827;">{regime['kospi']:,}</strong> &nbsp;|&nbsp;
+            VIX <strong style="color:#111827;">{regime['vix']}</strong>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- 관심종목 테이블 -->
+  <tr>
+    <td style="padding:24px 32px;">
+      <h2 style="margin:0 0 16px;font-size:15px;color:#374151;">관심종목 분석</h2>
+      <table width="100%" cellpadding="0" cellspacing="0" style="font-size:13px;">
+        <thead>
+          <tr style="background:#f3f4f6;">
+            <th style="padding:8px;text-align:left;color:#6b7280;font-weight:600;">종목</th>
+            <th style="padding:8px;text-align:right;color:#6b7280;font-weight:600;">현재가</th>
+            <th style="padding:8px;text-align:center;color:#6b7280;font-weight:600;">MA20</th>
+            <th style="padding:8px;text-align:right;color:#6b7280;font-weight:600;">ATR / 손절가</th>
+            <th style="padding:8px;color:#6b7280;font-weight:600;">AI 코멘트</th>
+          </tr>
+        </thead>
+        <tbody>{stock_rows}</tbody>
+      </table>
+    </td>
+  </tr>
+
+  <!-- CTA -->
+  <tr>
+    <td style="padding:24px 32px;text-align:center;border-top:1px solid #e5e7eb;">
+      <a href="{VERCEL_URL}" style="display:inline-block;background:#2563eb;color:#fff;text-decoration:none;padding:12px 28px;border-radius:8px;font-weight:600;font-size:14px;">
+        자세한 분석 보기 →
+      </a>
+    </td>
+  </tr>
+
+  <!-- 푸터 -->
+  <tr>
+    <td style="padding:20px 32px;background:#f9fafb;text-align:center;">
+      <p style="margin:0;font-size:11px;color:#9ca3af;">
+        이 리포트는 투자 권유가 아닙니다. 모든 투자 결정은 본인 책임입니다.<br>
+        생성 시각: {generated_at} UTC
+      </p>
+    </td>
+  </tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>"""
+
+
+def send_email(to: str, subject: str, html: str) -> dict:
+    """Resend API로 이메일 발송."""
+    if not RESEND_API_KEY:
+        raise RuntimeError("RESEND_API_KEY 미설정")
+    body = json.dumps({
+        "from": RESEND_FROM,
+        "to": [to],
+        "subject": subject,
+        "html": html,
+    }).encode()
+    req = urllib.request.Request(
+        "https://api.resend.com/emails",
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {RESEND_API_KEY}",
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return json.load(r)
+
+
+def send_report_to(email: str, tickers_raw: list) -> dict:
+    """구독자 1명에게 리포트 생성 + 발송. cron과 수동 트리거 모두 사용."""
+    regime = detect_market_regime()
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        futures = {ex.submit(build_report_for_ticker, t, regime): t for t in tickers_raw}
+        stocks = [f.result() for f in futures]
+
+    generated_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+    date_str = datetime.utcnow().strftime("%Y년 %m월 %d일")
+    html = build_email_html(regime, stocks, generated_at)
+    subject = f"📈 StockChat 일간 리포트 — {date_str} ({regime['state']})"
+    result = send_email(email, subject, html)
+
+    # 발송 로그 기록
+    if SUPABASE_URL and SUPABASE_KEY:
+        try:
+            _sb_post("report_logs", [{
+                "email": email,
+                "tickers": [s.get("ticker", s.get("name")) for s in stocks],
+                "status": "ok",
+            }])
+        except Exception:
+            pass
+
+    return {"email": email, "resend_id": result.get("id"), "stocks": len(stocks)}
+
+
 # ── 기본 라우트 ──────────────────────────────────────────────────────────────
 @app.route("/")
 def root():
@@ -473,6 +666,72 @@ def report_preview():
         },
         "stocks": stocks,
     })
+
+
+# ── 정기 리포트: 발송 ────────────────────────────────────────────────────────
+@app.route("/api/v2/report/send-test", methods=["POST"])
+def send_test_report():
+    """
+    테스트 발송 — 구독 여부 관계없이 즉시 이메일 발송.
+    body: { "email": "you@example.com", "tickers": ["삼성전자", "AAPL"] }
+    """
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    tickers_raw = data.get("tickers") or []
+    if not email or "@" not in email:
+        return jsonify({"error": "유효한 이메일을 입력해주세요."}), 400
+    if not tickers_raw:
+        return jsonify({"error": "tickers가 필요합니다."}), 400
+    if not RESEND_API_KEY:
+        return jsonify({"error": "RESEND_API_KEY가 설정되지 않았습니다."}), 500
+
+    try:
+        result = send_report_to(email, tickers_raw)
+        return jsonify({"ok": True, **result})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/v2/report/generate-all", methods=["POST"])
+def generate_all():
+    """
+    전체 구독자 일괄 발송 — Render Cron Job이 매일 호출.
+    내부 호출 전용: CRON_SECRET 헤더로 인증.
+    """
+    secret = os.getenv("CRON_SECRET", "")
+    if secret and request.headers.get("X-Cron-Secret") != secret:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    if not (SUPABASE_URL and SUPABASE_KEY):
+        return jsonify({"error": "Supabase 미설정"}), 500
+
+    now_hour_kst = (datetime.utcnow().hour + 9) % 24
+    rows = _sb_get(
+        f"subscriptions?active=eq.true&send_hour=eq.{now_hour_kst}&select=email,tickers"
+    )
+    if not rows:
+        return jsonify({"ok": True, "sent": 0, "message": "해당 시각 구독자 없음"})
+
+    results = []
+    for row in rows:
+        try:
+            r = send_report_to(row["email"], row["tickers"])
+            results.append({"email": row["email"], "status": "ok", "id": r.get("resend_id")})
+        except Exception as e:
+            results.append({"email": row["email"], "status": "error", "error": str(e)})
+            if SUPABASE_URL and SUPABASE_KEY:
+                try:
+                    _sb_post("report_logs", [{
+                        "email": row["email"],
+                        "tickers": row["tickers"],
+                        "status": "error",
+                        "error_msg": str(e),
+                    }])
+                except Exception:
+                    pass
+
+    sent = sum(1 for r in results if r["status"] == "ok")
+    return jsonify({"ok": True, "sent": sent, "total": len(rows), "results": results})
 
 
 if __name__ == "__main__":

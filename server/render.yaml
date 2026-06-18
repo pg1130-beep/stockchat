@@ -1,4 +1,5 @@
 services:
+  # 메인 API 서버 (상시 구동)
   - type: web
     name: stockchat-api
     runtime: python
@@ -6,6 +7,19 @@ services:
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app --workers 2 --threads 4 --timeout 120
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.0"
+
+  # 정기 리포트 Cron Job — 매일 23:00 UTC = 08:00 KST
+  - type: cron
+    name: stockchat-daily-report
+    runtime: python
+    rootDir: server
+    plan: free
+    schedule: "0 23 * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python cron_report.py
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.0"
