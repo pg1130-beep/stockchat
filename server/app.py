@@ -300,7 +300,8 @@ def generate_one_liner(name: str, quant: dict, regime: dict) -> str:
         timeout=20,
     )
     resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]["content"].strip()
+    content = resp.json()["choices"][0]["message"].get("content") or ""
+    return content.strip() or "데이터 확인 필요"
 
 
 def build_report_for_ticker(name: str, regime: dict) -> dict:
