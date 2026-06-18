@@ -276,6 +276,7 @@ def generate_one_liner(name: str, quant: dict, regime: dict) -> str:
     if not OPENROUTER_API_KEY:
         return "AI 코멘트 생성 불가 (API 키 미설정)"
 
+    import requests as _req
     cur = quant["currency"]
     prompt = (
         f"종목: {name} ({quant['ticker']}), 현재가: {quant['price']:,} {cur}, "
@@ -285,23 +286,21 @@ def generate_one_liner(name: str, quant: dict, regime: dict) -> str:
         "위 데이터를 바탕으로 이 종목에 대한 투자자 관점 한줄 코멘트를 작성하세요. "
         "30자 이내, 핵심 포인트 하나만, 낙관 편향 없이."
     )
-    body = json.dumps({
-        "model": "openai/gpt-oss-20b:free",
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 80,
-    }).encode()
-    req = urllib.request.Request(
+    resp = _req.post(
         "https://openrouter.ai/api/v1/chat/completions",
-        data=body,
-        method="POST",
         headers={
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
             "Content-Type": "application/json",
         },
+        json={
+            "model": "openai/gpt-oss-20b:free",
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 80,
+        },
+        timeout=20,
     )
-    with urllib.request.urlopen(req, timeout=20) as r:
-        result = json.load(r)
-    return result["choices"][0]["message"]["content"].strip()
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"].strip()
 
 
 def build_report_for_ticker(name: str, regime: dict) -> dict:
