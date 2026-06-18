@@ -490,8 +490,12 @@ def send_email(to: str, subject: str, html: str) -> dict:
             "Content-Type": "application/json",
         },
     )
-    with urllib.request.urlopen(req, timeout=15) as r:
-        return json.load(r)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Resend {e.code}: {detail}")
 
 
 def send_report_to(email: str, tickers_raw: list) -> dict:
@@ -535,6 +539,20 @@ def health():
 @app.route("/api/v2/ping")
 def ping():
     return jsonify({"pong": True, "message": "Render API 서버 정상 동작"})
+
+
+@app.route("/api/v2/report/check-config")
+def check_config():
+    """환경변수 설정 확인 (키 값은 노출 안 함)."""
+    return jsonify({
+        "SUPABASE_URL": bool(SUPABASE_URL),
+        "SUPABASE_KEY": bool(SUPABASE_KEY),
+        "OPENROUTER_API_KEY": bool(OPENROUTER_API_KEY),
+        "RESEND_API_KEY": bool(RESEND_API_KEY),
+        "RESEND_API_KEY_prefix": RESEND_API_KEY[:6] if RESEND_API_KEY else None,
+        "RESEND_FROM": RESEND_FROM,
+        "VERCEL_URL": VERCEL_URL,
+    })
 
 
 # ── 정기 리포트: 구독 관리 ────────────────────────────────────────────────────
