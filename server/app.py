@@ -475,27 +475,24 @@ def send_email(to: str, subject: str, html: str) -> dict:
     """Resend API로 이메일 발송."""
     if not RESEND_API_KEY:
         raise RuntimeError("RESEND_API_KEY 미설정")
-    body = json.dumps({
-        "from": RESEND_FROM,
-        "to": [to],
-        "subject": subject,
-        "html": html,
-    }).encode()
-    req = urllib.request.Request(
+    import requests as _req
+    resp = _req.post(
         "https://api.resend.com/emails",
-        data=body,
-        method="POST",
         headers={
             "Authorization": f"Bearer {RESEND_API_KEY}",
             "Content-Type": "application/json",
         },
+        json={
+            "from": RESEND_FROM,
+            "to": [to],
+            "subject": subject,
+            "html": html,
+        },
+        timeout=15,
     )
-    try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            return json.load(r)
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Resend {e.code}: {detail}")
+    if not resp.ok:
+        raise RuntimeError(f"Resend {resp.status_code}: {resp.text}")
+    return resp.json()
 
 
 def send_report_to(email: str, tickers_raw: list) -> dict:
