@@ -539,6 +539,7 @@ def check_config():
         "OPENROUTER_API_KEY": bool(OPENROUTER_API_KEY),
         "RESEND_API_KEY": bool(RESEND_API_KEY),
         "RESEND_API_KEY_prefix": RESEND_API_KEY[:6] if RESEND_API_KEY else None,
+        "OPENROUTER_API_KEY_prefix": OPENROUTER_API_KEY[:12] if OPENROUTER_API_KEY else None,
         "RESEND_FROM": RESEND_FROM,
         "VERCEL_URL": VERCEL_URL,
     })
